@@ -8,7 +8,7 @@ import io
 API_ID = 22231144  # Ganti dengan API ID kamu
 API_HASH = "772292211b49baaae83b06b714576cd3"
 BOT_TOKEN = "7548554907:AAGrGHswMqnbYOEDUQPEDt1Df-bNqEb262E"
-CHANNEL_ID = -1001234567890  # Ganti ke channel kamu
+CHANNEL_ID = -1002658558109  # Ganti ke channel kamu
 
 app = Client("toncoin_price_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
