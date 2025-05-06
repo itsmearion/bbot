@@ -1,82 +1,94 @@
 import asyncio
+import logging
+from aiogram import Bot, Dispatcher
+from aiogram.types import InputFile
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import aiohttp
-from pyrogram import Client
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import datetime
-import io
+from datetime import datetime, timedelta
+import os
 
-API_ID = 22231144  # Ganti dengan API ID kamu
-API_HASH = "772292211b49baaae83b06b714576cd3"
-BOT_TOKEN = "7548554907:AAGrGHswMqnbYOEDUQPEDt1Df-bNqEb262E"
-CHANNEL_ID = -1002658558109  # Ganti ke channel kamu
+# ENVIRONMENT VARIABLES
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Format: '@channelusername'
 
-app = Client("toncoin_price_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+scheduler = AsyncIOScheduler()
 
-last_price_usd = None
+COINGECKO_API = "https://api.coingecko.com/api/v3"
 
-async def get_price():
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=toncoin&vs_currencies=usd,idr"
+
+async def fetch_prices():
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
+        async with session.get(f"{COINGECKO_API}/simple/price?ids=toncoin&vs_currencies=usd,idr") as resp:
             data = await resp.json()
-            return data["toncoin"]["usd"], data["toncoin"]["idr"]
+        async with session.get(f"{COINGECKO_API}/coins/toncoin") as resp:
+            meta = await resp.json()
+    return {
+        "price_idr": data['toncoin']['idr'],
+        "price_usd": data['toncoin']['usd'],
+        "market_cap": meta['market_data']['market_cap']['usd'],
+        "cg_url": meta['links']['homepage'][0],
+        "cmc_url": "https://coinmarketcap.com/currencies/toncoin/"
+    }
 
-async def get_price_history():
-    url = "https://api.coingecko.com/api/v3/coins/toncoin/market_chart?vs_currency=usd&days=1&interval=hourly"
+
+async def fetch_weekly_chart():
+    today = datetime.utcnow()
+    from_ts = int((today - timedelta(days=7)).timestamp())
+    to_ts = int(today.timestamp())
+
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
+        async with session.get(f"{COINGECKO_API}/coins/toncoin/market_chart/range?vs_currency=usd&from={from_ts}&to={to_ts}") as resp:
             data = await resp.json()
-            return data["prices"]
 
-def create_chart(prices):
-    times = [datetime.datetime.fromtimestamp(p[0] / 1000) for p in prices]
+    prices = data['prices']  # [ [timestamp, price], ... ]
+    times = [datetime.fromtimestamp(p[0] / 1000) for p in prices]
     values = [p[1] for p in prices]
 
-    plt.figure(figsize=(8, 4))
-    plt.plot(times, values, color="blue", linewidth=2)
-    plt.title("Harga Toncoin 24 Jam Terakhir (USD)")
-    plt.xlabel("Waktu")
-    plt.ylabel("Harga (USD)")
+    plt.figure(figsize=(10, 5))
+    plt.plot(times, values, label='TON Price (USD)')
+    plt.title("TON Coin - Weekly Price")
+    plt.xlabel("Date")
+    plt.ylabel("Price (USD)")
     plt.grid(True)
-    plt.tight_layout()
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
+    plt.legend()
+    chart_path = "/tmp/toncoin_chart.png"
+    plt.savefig(chart_path)
     plt.close()
-    return buf
+    return chart_path
 
-async def send_to_channel():
-    global last_price_usd
-    while True:
-        try:
-            price_usd, price_idr = await get_price()
-            history = await get_price_history()
-            chart = create_chart(history)
 
-            message = f"""**Harga Toncoin (TON) Saat Ini**
-💵 USD: `$ {price_usd:.4f}`
-🇮🇩 IDR: `Rp {price_idr:,.0f}`"""
+async def send_update():
+    try:
+        data = await fetch_prices()
+        chart_path = await fetch_weekly_chart()
 
-            if last_price_usd:
-                change = (price_usd - last_price_usd) / last_price_usd * 100
-                if abs(change) >= 3:
-                    emoji = "📈" if change > 0 else "📉"
-                    message += f"\n\n{emoji} Perubahan: `{change:+.2f}%` dibanding 1 menit lalu."
+        message = (
+            f"💸 <b>Harga TON</b>\n"
+            f"USD: <code>${data['price_usd']:,.2f}</code>\n"
+            f"IDR: <code>Rp{data['price_idr']:,.0f}</code>\n\n"
+            f"🪙 <b>Market Cap</b>: <code>${data['market_cap']:,.0f}</code>\n\n"
+            f"♎️ <a href=\"{data['cg_url']}\">CoinGecko</a> | <a href=\"{data['cmc_url']}\">CoinMarketCap</a>"
+        )
 
-            await app.send_photo(CHANNEL_ID, photo=chart, caption=message)
-            last_price_usd = price_usd
+        await bot.send_photo(
+            chat_id=CHANNEL_ID,
+            photo=InputFile(chart_path),
+            caption=message,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"Gagal kirim update: {e}")
 
-        except Exception as e:
-            print("Gagal update harga:", e)
-
-        await asyncio.sleep(60)
 
 async def main():
-    await app.start()
-    await send_to_channel()
+    scheduler.add_job(send_update, "interval", minutes=10)
+    scheduler.start()
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
