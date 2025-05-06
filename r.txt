@@ -1,1 +1,4 @@
-matplotlib
+aiohttp==3.9.3
+matplotlib==3.8.4
+pyrogram==2.0.106
+tgcrypto==1.2.5
