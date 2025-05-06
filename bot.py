@@ -1,6 +1,8 @@
 import asyncio
 import aiohttp
 from pyrogram import Client
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import datetime
 import io
